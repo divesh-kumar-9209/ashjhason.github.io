@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Patient Sign In and Scan</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import { auth, db } from "./firebase-config.js";
+    import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js";
+    import { collection, addDoc, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js";
+
+    // helper to format today's date as yyyy-mm-dd
+    function todayString(){
+      const d = new Date();
+      return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+    }
+
+    // signup
+    window.signup = async () => {
+      const name = document.getElementById("pname").value.trim();
+      const email = document.getElementById("pemail").value.trim();
+      const pwd = document.getElementById("ppass").value;
+      if(!name || !email || !pwd){ alert("All fields required"); return; }
+      try{
+        const userCred = await createUserWithEmailAndPassword(auth, email, pwd);
+        // store basic profile as a tokenless patient doc
+        await addDoc(collection(db, "patients"), {
+          uid: userCred.user.uid,
+          name,
+          email,
+          createdAt: serverTimestamp()
+        });
+        alert("Signup successful. Please login.");
+      }catch(e){
+        alert("Signup error: " + e.message);
+      }
+    };
+
+    // login
+    window.login = async () => {
+      const email = document.getElementById("pemail2").value.trim();
+      const pwd = document.getElementById("ppass2").value;
+      if(!email || !pwd){ alert("Enter credentials"); return; }
+      try{
+        await signInWithEmailAndPassword(auth, email, pwd);
+        document.getElementById("afterLogin").style.display = "block";
+        document.getElementById("authArea").style.display = "none";
+      }catch(e){
+        alert("Login error: " + e.message);
+      }
+    };
+
+    // logout
+    window.logout = async () => {
+      await signOut(auth);
+      document.getElementById("afterLogin").style.display = "none";
+      document.getElementById("authArea").style.display = "block";
+    };
+
+    // scanning QR and issuing token
+    // using jsQR library for QR decode
+    window.startScan = async () => {
+      // require camera access permission
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }});
+        video.srcObject = stream;
+        video.play();
+
+        const tick = async () => {
+          if(video.readyState === video.HAVE_ENOUGH_DATA){
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video,0,0,canvas.width, canvas.height);
+            const imageData = ctx.getImageData(0,0,canvas.width, canvas.height);
+            const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
+            if(code){
+              // expected payload is JSON like { hospitalId: "HOSP1" }
+              try{
+                const payload = JSON.parse(code.data);
+                if(payload && payload.hospitalId){
+                  // stop camera
+                  const tracks = stream.getTracks();
+                  tracks.forEach(t => t.stop());
+                  await issueTokenFor(payload.hospitalId);
+                  return;
+                }
+              }catch(err){}
+            }
+          }
+          requestAnimationFrame(tick);
+        };
+        tick();
+      }catch(err){
+        alert("Camera access failed: " + err.message);
+      }
+    };
+
+    async function issueTokenFor(hospitalId){
+      // get current user
+      const user = auth.currentUser;
+      if(!user){ alert("Please login first"); return; }
+
+      // check tokens issued today for this hospital
+      const dateStr = todayString();
+      const tokensRef = collection(db, "tokens");
+      const q = query(tokensRef, where("hospitalId","==",hospitalId), where("date","==",dateStr));
+      const snap = await getDocs(q);
+      const issuedCount = snap.size;
+
+      const maxPerDay = 60; // change as needed
+      if(issuedCount >= maxPerDay){
+        alert("All appointments are full for today");
+        return;
+      }
+
+      const tokenNumber = issuedCount + 1;
+      // compute simple slot allocation
+      let slot;
+      if(tokenNumber <= 20) slot = "09:00 - 10:00";
+      else if(tokenNumber <= 40) slot = "10:00 - 11:00";
+      else slot = "11:00 - 12:00";
+
+      // fetch patient profile email->name from patients collection is optional
+      // For simplicity we store minimal patient info
+      await addDoc(tokensRef, {
+        hospitalId,
+        uid: user.uid,
+        tokenNumber,
+        date: dateStr,
+        slot,
+        issuedAt: serverTimestamp(),
+        status: "Pending"
+      });
+
+      alert("Token issued: T" + tokenNumber + " for slot " + slot);
+    }
+
+    // load jsQR and attach to window
+    window.loadHelpers = async () => {
+      // jsQR is loaded via script tag later, ensure available
+    };
+
+    window.onload = loadHelpers;
+  </script>
+
+  <!-- include jsQR library -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+</head>
+<body>
+  <h2>Patient Signup</h2>
+  <div id="authArea">
+    <input id="pname" placeholder="Full name">
+    <input id="pemail" placeholder="Email">
+    <input id="ppass" placeholder="Password" type="password">
+    <button onclick="signup()">Signup</button>
+
+    <hr>
+
+    <h3>Login</h3>
+    <input id="pemail2" placeholder="Email">
+    <input id="ppass2" placeholder="Password" type="password">
+    <button onclick="login()">Login</button>
+  </div>
+
+  <div id="afterLogin" style="display:none">
+    <p>Logged in. Scan hospital QR at counter to get token.</p>
+    <video id="video" style="width:320px; height:auto; border:1px solid #ccc"></video>
+    <canvas id="canvas" style="display:none"></canvas>
+    <br>
+    <button onclick="startScan()">Scan QR and Get Token</button>
+    <button onclick="logout()">Logout</button>
+  </div>
+</body>
+</html>

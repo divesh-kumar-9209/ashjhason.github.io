@@ -1,0 +1,4 @@
+body{ font-family: Arial, sans-serif; padding:18px; background:#fbfbfb; }
+input{ display:block; margin:8px 0; padding:8px; width:300px; }
+button{ padding:8px 12px; margin-top:6px; }
+#tokenList div{ padding:6px; border-bottom:1px solid #eee; margin-bottom:6px; }
