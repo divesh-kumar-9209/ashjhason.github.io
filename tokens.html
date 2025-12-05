@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tokens List</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <style>
+    body{font-family:Arial,sans-serif;padding:20px;background:#fafafa}
+    .top{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    input{padding:8px;width:260px;max-width:100%}
+    button{padding:8px 12px}
+    #list{margin-top:14px;max-width:960px}
+    .item{padding:10px;border:1px solid #e6e6e6;border-radius:6px;margin-bottom:8px;background:#fff;display:flex;align-items:center;justify-content:space-between}
+    .left{font-size:15px}
+    .actions button{margin-left:8px}
+    .empty{color:#666}
+  </style>
+</head>
+<body>
+
+<h2>Issued Tokens Viewer</h2>
+
+<div class="top">
+  <input id="hospitalIdInput" placeholder="Enter Hospital ID e.g. HOSP1">
+  <input id="dateInput" type="date">
+  <button id="loadBtn">Load Tokens</button>
+  <button id="liveBtn">Live Listen</button>
+  <button id="stopLiveBtn" disabled>Stop Live</button>
+</div>
+
+<div id="list"></div>
+
+<script>
+  var firebaseConfig = {
+    apiKey: "AIzaSyAJnlrtazUWr_HjQiEkFNcbnsve73g1pEQ",
+    authDomain: "smart-opd-69488.firebaseapp.com",
+    projectId: "smart-opd-69488",
+    storageBucket: "smart-opd-69488.firebasestorage.app",
+    messagingSenderId: "373276983810",
+    appId: "1:373276983810:web:88a3018ab7b811550d1d1b"
+  };
+  firebase.initializeApp(firebaseConfig);
+  var db = firebase.firestore();
+
+  function todayString(){
+    var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+
+  var liveUnsub = null;
+
+  function renderList(docs){
+    var list = document.getElementById("list");
+    list.innerHTML = "";
+    if(!docs || docs.length === 0){
+      var p = document.createElement("div");
+      p.className = "empty";
+      p.innerText = "No tokens found";
+      list.appendChild(p);
+      return;
+    }
+    docs.forEach(function(entry){
+      var div = document.createElement("div");
+      div.className = "item";
+      var left = document.createElement("div");
+      left.className = "left";
+      left.innerHTML = "<strong>T" + entry.tokenNumber + "</strong> &nbsp; " + (entry.name || entry.uid || "Unknown") + " &nbsp; | &nbsp; " + (entry.slot || "") + " &nbsp; | &nbsp; " + (entry.date || "");
+      var actions = document.createElement("div");
+      actions.className = "actions";
+      var callBtn = document.createElement("button");
+      callBtn.innerText = "Call";
+      callBtn.onclick = function(){
+        db.collection("tokens").doc(entry._id).update({ status: "Called" });
+      };
+      var checkBtn = document.createElement("button");
+      checkBtn.innerText = "Checked In";
+      checkBtn.onclick = function(){
+        db.collection("tokens").doc(entry._id).update({ status: "Checked In" });
+      };
+      var delBtn = document.createElement("button");
+      delBtn.innerText = "Delete";
+      delBtn.onclick = function(){
+        if(confirm("Delete token T" + entry.tokenNumber + "?")) db.collection("tokens").doc(entry._id).delete();
+      };
+      var statusSpan = document.createElement("span");
+      statusSpan.style.marginLeft = "12px";
+      statusSpan.innerText = entry.status ? ("Status: " + entry.status) : "";
+      actions.appendChild(callBtn);
+      actions.appendChild(checkBtn);
+      actions.appendChild(delBtn);
+      actions.appendChild(statusSpan);
+      div.appendChild(left);
+      div.appendChild(actions);
+      list.appendChild(div);
+    });
+  }
+
+  function sortByIssuedAt(arr){
+    arr.sort(function(a,b){
+      var ta = 0;
+      var tb = 0;
+      if(a.issuedAt && a.issuedAt.toMillis) ta = a.issuedAt.toMillis();
+      else if(a.issuedAt) ta = new Date(a.issuedAt).getTime();
+      if(b.issuedAt && b.issuedAt.toMillis) tb = b.issuedAt.toMillis();
+      else if(b.issuedAt) tb = new Date(b.issuedAt).getTime();
+      return ta - tb;
+    });
+  }
+
+  function loadTokensOnce(hospitalId, dateStr){
+    if(!hospitalId){ alert("Enter hospital ID"); return; }
+    if(!dateStr) dateStr = todayString();
+    db.collection("tokens").where("hospitalId","==",hospitalId).where("date","==",dateStr).get()
+      .then(function(snap){
+        var arr = [];
+        snap.forEach(function(doc){
+          var d = doc.data();
+          d._id = doc.id;
+          arr.push(d);
+        });
+        sortByIssuedAt(arr);
+        renderList(arr);
+      })
+      .catch(function(err){
+        alert("Error fetching tokens: " + err.message);
+      });
+  }
+
+  function startLiveListen(hospitalId, dateStr){
+    if(!hospitalId){ alert("Enter hospital ID"); return; }
+    if(!dateStr) dateStr = todayString();
+    stopLiveListen();
+    var q = db.collection("tokens").where("hospitalId","==",hospitalId).where("date","==",dateStr);
+    liveUnsub = q.onSnapshot(function(snap){
+      var arr = [];
+      snap.forEach(function(doc){
+        var d = doc.data();
+        d._id = doc.id;
+        arr.push(d);
+      });
+      sortByIssuedAt(arr);
+      renderList(arr);
+    }, function(err){
+      alert("Error listening tokens: " + err.message);
+    });
+    document.getElementById("liveBtn").disabled = true;
+    document.getElementById("stopLiveBtn").disabled = false;
+  }
+
+  function stopLiveListen(){
+    if(liveUnsub){ liveUnsub(); liveUnsub = null; }
+    document.getElementById("liveBtn").disabled = false;
+    document.getElementById("stopLiveBtn").disabled = true;
+  }
+
+  document.getElementById("loadBtn").addEventListener("click", function(){
+    var hid = document.getElementById("hospitalIdInput").value.trim();
+    var dateVal = document.getElementById("dateInput").value;
+    loadTokensOnce(hid, dateVal);
+  });
+
+  document.getElementById("liveBtn").addEventListener("click", function(){
+    var hid = document.getElementById("hospitalIdInput").value.trim();
+    var dateVal = document.getElementById("dateInput").value;
+    startLiveListen(hid, dateVal);
+  });
+
+  document.getElementById("stopLiveBtn").addEventListener("click", function(){
+    stopLiveListen();
+  });
+
+  document.addEventListener("DOMContentLoaded", function(){
+    document.getElementById("dateInput").value = todayString();
+  });
+</script>
+
+</body>
+</html>
