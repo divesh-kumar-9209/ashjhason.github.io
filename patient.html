@@ -6,6 +6,9 @@
   <title>Patient Portal</title>
   <link rel="stylesheet" href="./style.css">
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 </head>
 <body>
 
@@ -36,138 +39,147 @@
   </div>
 </div>
 
-<script type="module">
-  import { firebaseConfig } from "./firebase-config.js"
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js"
-  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js"
-  import { getFirestore, collection, addDoc, serverTimestamp, query, where, getDocs } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js"
-
-  const app = initializeApp(firebaseConfig)
-  const auth = getAuth(app)
-  const db = getFirestore(app)
+<script>
+  var firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "SENDER_ID",
+    appId: "APP_ID"
+  };
+  firebase.initializeApp(firebaseConfig);
+  var auth = firebase.auth();
+  var db = firebase.firestore();
 
   function todayString(){
-    const d = new Date()
-    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0")
+    var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
   }
 
-  async function signup(){
-    const name = document.getElementById("pname").value.trim()
-    const email = document.getElementById("pemail").value.trim()
-    const pass = document.getElementById("ppass").value
-    if(!name || !email || !pass){ alert("Fill all fields"); return }
-    try{
-      const u = await createUserWithEmailAndPassword(auth, email, pass)
-      await addDoc(collection(db, "patients"), {
-        uid: u.user.uid,
-        name,
-        email,
-        createdAt: serverTimestamp()
+  function signup(){
+    var name = document.getElementById("pname").value.trim();
+    var email = document.getElementById("pemail").value.trim();
+    var pass = document.getElementById("ppass").value;
+    if(!name || !email || !pass){ alert("Fill all fields"); return; }
+    auth.createUserWithEmailAndPassword(email, pass)
+      .then(function(cred){
+        return db.collection("patients").add({
+          uid: cred.user.uid,
+          name: name,
+          email: email,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
       })
-      alert("Signup done. Login now")
-    }catch(e){
-      alert(e.message)
-    }
+      .then(function(){
+        alert("Signup done. Login now");
+      })
+      .catch(function(err){
+        alert(err.message);
+      });
   }
 
-  async function login(){
-    const email = document.getElementById("pemail2").value.trim()
-    const pass = document.getElementById("ppass2").value
-    if(!email || !pass){ alert("Fill login fields"); return }
-    try{
-      await signInWithEmailAndPassword(auth, email, pass)
-    }catch(e){
-      alert(e.message)
-    }
+  function login(){
+    var email = document.getElementById("pemail2").value.trim();
+    var pass = document.getElementById("ppass2").value;
+    if(!email || !pass){ alert("Fill login fields"); return; }
+    auth.signInWithEmailAndPassword(email, pass)
+      .catch(function(err){
+        alert(err.message);
+      });
   }
 
-  async function logout(){
-    try{
-      await signOut(auth)
-    }catch(e){}
+  function logout(){
+    auth.signOut().catch(function(){});
   }
 
-  async function issueTokenFor(hospitalId){
-    const user = auth.currentUser
-    if(!user){ alert("Login first"); return }
-    const dateStr = todayString()
-    const q = query(collection(db, "tokens"), where("hospitalId","==",hospitalId), where("date","==",dateStr))
-    const snap = await getDocs(q)
-    const count = snap.size
-    const max = 60
-    if(count >= max){
-      alert("All appointments full")
-      return
-    }
-    const token = count + 1
-    let slot
-    if(token <= 20) slot = "09:00 to 10:00"
-    else if(token <= 40) slot = "10:00 to 11:00"
-    else slot = "11:00 to 12:00"
-    await addDoc(collection(db, "tokens"), {
-      hospitalId,
-      uid: user.uid,
-      tokenNumber: token,
-      date: dateStr,
-      slot,
-      issuedAt: serverTimestamp(),
-      status: "Pending"
-    })
-    alert("Your token is T" + token + " for slot " + slot)
-  }
-
-  async function startScan(){
-    const video = document.getElementById("video")
-    const canvas = document.getElementById("canvas")
-    const ctx = canvas.getContext("2d")
-    try{
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-      video.srcObject = stream
-      video.play()
-      const scanLoop = () => {
-        if(video.readyState === video.HAVE_ENOUGH_DATA){
-          canvas.width = video.videoWidth
-          canvas.height = video.videoHeight
-          ctx.drawImage(video,0,0,canvas.width,canvas.height)
-          const img = ctx.getImageData(0,0,canvas.width,canvas.height)
-          const code = jsQR(img.data,img.width,img.height)
-          if(code){
-            try{
-              const data = JSON.parse(code.data)
-              if(data.hospitalId){
-                stream.getTracks().forEach(t => t.stop())
-                issueTokenFor(data.hospitalId)
-                return
-              }
-            }catch(e){}
-          }
+  function issueTokenFor(hospitalId){
+    var user = auth.currentUser;
+    if(!user){ alert("Login first"); return; }
+    var dateStr = todayString();
+    db.collection("tokens").where("hospitalId","==",hospitalId).where("date","==",dateStr).get()
+      .then(function(snap){
+        var count = snap.size;
+        var max = 60;
+        if(count >= max){
+          alert("All appointments full");
+          return;
         }
-        requestAnimationFrame(scanLoop)
-      }
-      scanLoop()
-    }catch(e){
-      alert(e.message)
-    }
+        var token = count + 1;
+        var slot;
+        if(token <= 20) slot = "09:00 to 10:00";
+        else if(token <= 40) slot = "10:00 to 11:00";
+        else slot = "11:00 to 12:00";
+        return db.collection("tokens").add({
+          hospitalId: hospitalId,
+          uid: user.uid,
+          tokenNumber: token,
+          date: dateStr,
+          slot: slot,
+          issuedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: "Pending"
+        }).then(function(){
+          alert("Your token is T" + token + " for slot " + slot);
+        });
+      })
+      .catch(function(err){
+        alert(err.message);
+      });
   }
 
-  window.addEventListener("DOMContentLoaded", () => {
-    document.getElementById("signupBtn").addEventListener("click", signup)
-    document.getElementById("loginBtn").addEventListener("click", login)
-    document.getElementById("logoutBtn").addEventListener("click", logout)
-    document.getElementById("scanBtn").addEventListener("click", startScan)
-  })
+  function startScan(){
+    var video = document.getElementById("video");
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then(function(stream){
+        video.srcObject = stream;
+        video.play();
+        function scanLoop(){
+          if(video.readyState === video.HAVE_ENOUGH_DATA){
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video,0,0,canvas.width,canvas.height);
+            var img = ctx.getImageData(0,0,canvas.width,canvas.height);
+            var code = jsQR(img.data,img.width,img.height);
+            if(code){
+              try{
+                var data = JSON.parse(code.data);
+                if(data.hospitalId){
+                  stream.getTracks().forEach(function(t){ t.stop(); });
+                  issueTokenFor(data.hospitalId);
+                  return;
+                }
+              }catch(e){}
+            }
+          }
+          requestAnimationFrame(scanLoop);
+        }
+        scanLoop();
+      })
+      .catch(function(err){
+        alert(err.message);
+      });
+  }
 
-  onAuthStateChanged(auth, user => {
-    const authArea = document.getElementById("authArea")
-    const after = document.getElementById("afterLogin")
+  document.addEventListener("DOMContentLoaded", function(){
+    document.getElementById("signupBtn").addEventListener("click", signup);
+    document.getElementById("loginBtn").addEventListener("click", login);
+    document.getElementById("logoutBtn").addEventListener("click", logout);
+    document.getElementById("scanBtn").addEventListener("click", startScan);
+  });
+
+  auth.onAuthStateChanged(function(user){
+    var authArea = document.getElementById("authArea");
+    var after = document.getElementById("afterLogin");
     if(user){
-      authArea.style.display = "none"
-      after.style.display = "block"
+      authArea.style.display = "none";
+      after.style.display = "block";
     }else{
-      authArea.style.display = "block"
-      after.style.display = "none"
+      authArea.style.display = "block";
+      after.style.display = "none";
     }
-  })
+  });
 </script>
 
 </body>
