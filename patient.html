@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Patient Portal</title>
   <link rel="stylesheet" href="./style.css">
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
-
 <body>
 
 <h2>Patient Portal</h2>
@@ -27,20 +26,20 @@
   <button id="loginBtn">Login</button>
 </div>
 
-<div id="afterLogin" style="display none">
-  <p>You are logged in. Scan hospital QR to get token.</p>
-
+<div id="afterLogin" style="display:none">
+  <p id="loggedText">You are logged in. Scan hospital QR to get token.</p>
   <video id="video" style="width:320px;height:auto;border:1px solid #ccc"></video>
-  <canvas id="canvas" style="display none"></canvas>
-
-  <button id="scanBtn">Scan QR and get token</button>
-  <button id="logoutBtn">Logout</button>
+  <canvas id="canvas" style="display:none"></canvas>
+  <div style="margin-top:12px">
+    <button id="scanBtn">Scan QR and get token</button>
+    <button id="logoutBtn">Logout</button>
+  </div>
 </div>
 
 <script type="module">
   import { firebaseConfig } from "./firebase-config.js"
   import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js"
-  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js"
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js"
   import { getFirestore, collection, addDoc, serverTimestamp, query, where, getDocs } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js"
 
   const app = initializeApp(firebaseConfig)
@@ -77,40 +76,34 @@
     if(!email || !pass){ alert("Fill login fields"); return }
     try{
       await signInWithEmailAndPassword(auth, email, pass)
-      document.getElementById("authArea").style.display = "none"
-      document.getElementById("afterLogin").style.display = "block"
     }catch(e){
       alert(e.message)
     }
   }
 
   async function logout(){
-    await signOut(auth)
-    document.getElementById("authArea").style.display = "block"
-    document.getElementById("afterLogin").style.display = "none"
+    try{
+      await signOut(auth)
+    }catch(e){}
   }
 
   async function issueTokenFor(hospitalId){
     const user = auth.currentUser
     if(!user){ alert("Login first"); return }
-
     const dateStr = todayString()
     const q = query(collection(db, "tokens"), where("hospitalId","==",hospitalId), where("date","==",dateStr))
     const snap = await getDocs(q)
     const count = snap.size
     const max = 60
-
     if(count >= max){
       alert("All appointments full")
       return
     }
-
     const token = count + 1
     let slot
     if(token <= 20) slot = "09:00 to 10:00"
     else if(token <= 40) slot = "10:00 to 11:00"
     else slot = "11:00 to 12:00"
-
     await addDoc(collection(db, "tokens"), {
       hospitalId,
       uid: user.uid,
@@ -120,7 +113,6 @@
       issuedAt: serverTimestamp(),
       status: "Pending"
     })
-
     alert("Your token is T" + token + " for slot " + slot)
   }
 
@@ -128,12 +120,10 @@
     const video = document.getElementById("video")
     const canvas = document.getElementById("canvas")
     const ctx = canvas.getContext("2d")
-
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
       video.srcObject = stream
       video.play()
-
       const scanLoop = () => {
         if(video.readyState === video.HAVE_ENOUGH_DATA){
           canvas.width = video.videoWidth
@@ -141,7 +131,6 @@
           ctx.drawImage(video,0,0,canvas.width,canvas.height)
           const img = ctx.getImageData(0,0,canvas.width,canvas.height)
           const code = jsQR(img.data,img.width,img.height)
-
           if(code){
             try{
               const data = JSON.parse(code.data)
@@ -166,6 +155,18 @@
     document.getElementById("loginBtn").addEventListener("click", login)
     document.getElementById("logoutBtn").addEventListener("click", logout)
     document.getElementById("scanBtn").addEventListener("click", startScan)
+  })
+
+  onAuthStateChanged(auth, user => {
+    const authArea = document.getElementById("authArea")
+    const after = document.getElementById("afterLogin")
+    if(user){
+      authArea.style.display = "none"
+      after.style.display = "block"
+    }else{
+      authArea.style.display = "block"
+      after.style.display = "none"
+    }
   })
 </script>
 

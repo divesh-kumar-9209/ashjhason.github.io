@@ -7,7 +7,6 @@ export const firebaseConfig = {
   storageBucket: "smart-opd-69488.firebasestorage.app",
   messagingSenderId: "373276983810",
   appId: "1:373276983810:web:a4b8808e566d81150d1d1b"
-  measurementId: "G-PN4RQWNCS9"
 };
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
