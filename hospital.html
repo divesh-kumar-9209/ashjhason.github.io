@@ -2,117 +2,188 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hospital Dashboard</title>
-  <link rel="stylesheet" href="style.css">
-  <script type="module">
-    import { auth, db } from "./firebase-config.js";
-    import { signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js";
-    import { collection, addDoc, query, where, getDocs, onSnapshot, orderBy, serverTimestamp, doc, updateDoc } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js";
-
-    window.hospLogin = async () => {
-      const email = document.getElementById("hemail").value.trim();
-      const pwd = document.getElementById("hpass").value;
-      if(!email || !pwd){ alert("Enter credentials"); return; }
-      try{
-        await signInWithEmailAndPassword(auth, email, pwd);
-        document.getElementById("hAuth").style.display = "none";
-        document.getElementById("hDash").style.display = "block";
-        loadDashboard();
-      }catch(e){ alert("Login failed " + e.message); }
-    };
-
-    window.hospLogout = async () => {
-      await signOut(auth);
-      document.getElementById("hDash").style.display = "none";
-      document.getElementById("hAuth").style.display = "block";
-    };
-
-    function todayString(){
-      const d = new Date();
-      return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
-    }
-
-    window.createHospitalDoc = async () => {
-      // create a simple hospital record for demo
-      const hid = document.getElementById("hid").value.trim();
-      const name = document.getElementById("hname").value.trim();
-      if(!hid || !name){ alert("Provide hospital id and name"); return; }
-      await addDoc(collection(db, "hospitals"), {
-        hospitalId: hid,
-        name,
-        createdAt: serverTimestamp(),
-        maxPerDay: 60
-      });
-      alert("Hospital record created. Use this hospital id for QR: " + hid);
-      document.getElementById("qrText").innerText = JSON.stringify({ hospitalId: hid });
-      // generate QR visually is handled by client using qrcode lib loaded below
-    };
-
-    async function loadDashboard(){
-      const dateStr = todayString();
-      const q = query(collection(db,"tokens"), where("date","==",dateStr), orderBy("issuedAt"));
-      onSnapshot(q, snapshot => {
-        const list = document.getElementById("tokenList");
-        list.innerHTML = "";
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          const li = document.createElement("div");
-          li.innerHTML = "T" + data.tokenNumber + " | " + (data.uid || "") + " | " + data.slot + " | " + data.status + " ";
-          const btn = document.createElement("button");
-          btn.innerText = "Call";
-          btn.onclick = async () => {
-            // mark as called or checked if desired
-            await updateDoc(doc(db,"tokens", docSnap.id), { status: "Called" });
-          };
-          li.appendChild(btn);
-          list.appendChild(li);
-        });
-      });
-    }
-
-    window.loadQRlib = () => {
-      // leave placeholder, qrcode lib is included by script tag below
-    };
-
-    window.onload = loadQRlib;
-  </script>
-
+  <link rel="stylesheet" href="./style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 </head>
 <body>
-  <h2>Hospital Login</h2>
-  <div id="hAuth">
-    <input id="hemail" placeholder="Hospital admin email">
-    <input id="hpass" placeholder="Password" type="password">
-    <button onclick="hospLogin()">Login</button>
+
+<h2>Hospital Dashboard</h2>
+
+<div id="authArea">
+  <h3>Hospital Admin Login</h3>
+  <input id="hemail" placeholder="Admin email">
+  <input id="hpass" type="password" placeholder="Password">
+  <button id="hLoginBtn">Login</button>
+</div>
+
+<div id="hDash" style="display:none">
+  <div style="margin-bottom:14px">
+    <input id="hid" placeholder="Hospital ID e.g. HOSP1" style="width:220px">
+    <input id="hname" placeholder="Hospital name" style="width:220px">
+    <input id="hmax" placeholder="Max tokens per day (60)" style="width:180px">
+    <button id="createHospitalBtn">Create / Update Hospital</button>
   </div>
 
-  <div id="hDash" style="display:none">
-    <h3>Dashboard</h3>
-    <p>Create hospital record and QR</p>
-    <input id="hid" placeholder="hospital id e.g. HOSP1">
-    <input id="hname" placeholder="Hospital name">
-    <button onclick="createHospitalDoc()">Create Hospital and Show QR text</button>
-
-    <div id="qrArea">
-      <p id="qrText"></p>
-      <div id="qrbox"></div>
-      <script>
-        // generate QR when qrText changes by observing periodically
-        setInterval(() => {
-          const txt = document.getElementById("qrText").innerText;
-          const box = document.getElementById("qrbox");
-          if(txt && box.innerHTML.trim()===""){
-            new QRCode(box, { text: txt, width: 160, height: 160 });
-          }
-        }, 800);
-      </script>
-    </div>
-
-    <h4>Today's issued tokens</h4>
-    <div id="tokenList"></div>
-
-    <button onclick="hospLogout()">Logout</button>
+  <div id="qrArea" style="margin-bottom:12px">
+    <div id="qrText" style="display:inline-block; margin-right:12px"></div>
+    <div id="qrbox" style="display:inline-block"></div>
   </div>
+
+  <div style="margin-bottom:8px">
+    <button id="refreshTokens">Refresh Tokens</button>
+    <button id="logoutBtn">Logout</button>
+  </div>
+
+  <h3>Today's Issued Tokens</h3>
+  <div id="tokenList" style="max-width:900px"></div>
+</div>
+
+<script>
+  var firebaseConfig = {
+    apiKey: "AIzaSyAJnlrtazUWr_HjQiEkFNcbnsve73g1pEQ",
+    authDomain: "smart-opd-69488.firebaseapp.com",
+    projectId: "smart-opd-69488",
+    storageBucket: "smart-opd-69488.firebasestorage.app",
+    messagingSenderId: "373276983810",
+    appId: "1:373276983810:web:88a3018ab7b811550d1d1b"
+  };
+  firebase.initializeApp(firebaseConfig);
+  var auth = firebase.auth();
+  var db = firebase.firestore();
+
+  function todayString(){
+    var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+
+  function show(msg){
+    console.log(msg);
+  }
+
+  document.getElementById("hLoginBtn").addEventListener("click", function(){
+    var email = document.getElementById("hemail").value.trim();
+    var pass = document.getElementById("hpass").value;
+    if(!email || !pass){ alert("Enter credentials"); return; }
+    auth.signInWithEmailAndPassword(email, pass).catch(function(e){ alert(e.message); });
+  });
+
+  document.getElementById("logoutBtn").addEventListener("click", function(){
+    auth.signOut().catch(function(){});
+  });
+
+  document.getElementById("createHospitalBtn").addEventListener("click", async function(){
+    var hid = document.getElementById("hid").value.trim();
+    var name = document.getElementById("hname").value.trim();
+    var max = parseInt(document.getElementById("hmax").value) || 60;
+    if(!hid || !name){ alert("Provide hospital id and name"); return; }
+
+    var coll = db.collection("hospitals");
+    var existing = await coll.where("hospitalId","==",hid).get();
+    if(existing.empty){
+      await coll.add({ hospitalId: hid, name: name, maxPerDay: max, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    } else {
+      var docId = existing.docs[0].id;
+      await coll.doc(docId).update({ name: name, maxPerDay: max });
+    }
+
+    document.getElementById("qrText").innerText = JSON.stringify({ hospitalId: hid });
+    var box = document.getElementById("qrbox");
+    box.innerHTML = "";
+    new QRCode(box, { text: document.getElementById("qrText").innerText, width: 160, height: 160 });
+    alert("Hospital saved. Place this QR at counter.");
+    listenTokens(hid);
+  });
+
+  function renderTokenItem(docSnap, idx){
+    var data = docSnap.data();
+    var container = document.createElement("div");
+    container.style.padding = "10px";
+    container.style.borderBottom = "1px solid #eee";
+    var left = "T" + data.tokenNumber + " | " + (data.name || data.uid || "") + " | " + data.slot + " | " + (data.status || "");
+    container.innerHTML = "<strong>" + left + "</strong>";
+
+    var callBtn = document.createElement("button");
+    callBtn.innerText = "Call";
+    callBtn.style.marginLeft = "12px";
+    callBtn.onclick = function(){
+      db.collection("tokens").doc(docSnap.id).update({ status: "Called" });
+    };
+
+    var checkBtn = document.createElement("button");
+    checkBtn.innerText = "Checked In";
+    checkBtn.style.marginLeft = "8px";
+    checkBtn.onclick = function(){
+      db.collection("tokens").doc(docSnap.id).update({ status: "Checked In" });
+    };
+
+    var delBtn = document.createElement("button");
+    delBtn.innerText = "Delete";
+    delBtn.style.marginLeft = "8px";
+    delBtn.onclick = function(){
+      if(confirm("Delete this token?")) db.collection("tokens").doc(docSnap.id).delete();
+    };
+
+    container.appendChild(callBtn);
+    container.appendChild(checkBtn);
+    container.appendChild(delBtn);
+
+    return container;
+  }
+
+  var currentListener = null;
+
+  function clearListener(){
+    if(currentListener && typeof currentListener === "function"){
+      currentListener();
+      currentListener = null;
+    }
+  }
+
+  function listenTokens(hospitalId){
+    clearListener();
+    var dateStr = todayString();
+    var q = db.collection("tokens").where("hospitalId","==",hospitalId).where("date","==",dateStr).orderBy("issuedAt");
+    currentListener = q.onSnapshot(function(snapshot){
+      var list = document.getElementById("tokenList");
+      list.innerHTML = "";
+      if(snapshot.empty) list.innerText = "No tokens issued yet for today";
+      snapshot.forEach(function(docSnap, idx){
+        var el = renderTokenItem(docSnap, idx);
+        list.appendChild(el);
+      });
+    }, function(err){
+      console.error(err);
+      alert("Error listening tokens: " + err.message);
+    });
+  }
+
+  document.getElementById("refreshTokens").addEventListener("click", function(){
+    var qr = document.getElementById("qrText").innerText;
+    if(!qr){ alert("Create hospital first"); return; }
+    try{
+      var obj = JSON.parse(qr);
+      listenTokens(obj.hospitalId);
+    }catch(e){ alert("Invalid QR text"); }
+  });
+
+  auth.onAuthStateChanged(function(user){
+    var authArea = document.getElementById("authArea");
+    var dash = document.getElementById("hDash");
+    if(user){
+      authArea.style.display = "none";
+      dash.style.display = "block";
+    } else {
+      authArea.style.display = "block";
+      dash.style.display = "none";
+      clearListener();
+    }
+  });
+</script>
+
 </body>
 </html>
