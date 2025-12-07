@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hospital Dashboard</title>
+
   <link rel="stylesheet" href="./style.css">
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
@@ -12,35 +14,49 @@
 </head>
 <body>
 
-<h2>Hospital Dashboard</h2>
+<h2 class="center">Hospital Dashboard</h2>
 
-<div id="authArea">
-  <h3>Hospital Admin Login</h3>
+<div id="authArea" class="card-box">
+  <h3>Hospital admin login</h3>
   <input id="hemail" placeholder="Admin email">
-  <input id="hpass" type="password" placeholder="Password">
-  <button id="hLoginBtn">Login</button>
+  <input id="hpass" placeholder="Password" type="password">
+  <button id="loginBtn">Login</button>
 </div>
 
-<div id="hDash" style="display:none">
-  <div style="margin-bottom:14px">
-    <input id="hid" placeholder="Hospital ID e.g. HOSP1" style="width:220px">
-    <input id="hname" placeholder="Hospital name" style="width:220px">
-    <input id="hmax" placeholder="Max tokens per day (60)" style="width:180px">
-    <button id="createHospitalBtn">Create / Update Hospital</button>
+<div id="dashArea" style="display:none">
+
+  <div class="card-box">
+    <h3>Hospital info and QR code</h3>
+    <input id="hid" placeholder="Hospital ID example Lucknow_Hospital">
+    <input id="hname" placeholder="Hospital name">
+    <input id="hmax" placeholder="Max tokens per day example 60">
+
+    <button id="saveHospitalBtn">Create or update hospital</button>
+
+    <div style="margin-top:16px; display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start">
+      <div>
+        <div id="qrbox"></div>
+        <button id="downloadQrBtn" style="margin-top:8px">Download QR image</button>
+      </div>
+      <div>
+        <div>QR payload</div>
+        <pre id="qrText" style="background:#f4f8fb;border-radius:8px;padding:8px 10px;margin-top:6px;"></pre>
+        <p style="font-size:13px;color:#4c6b70;margin-top:6px;max-width:260px">
+          Print this QR and place it at the hospital counter. Patients will scan this code from the patient portal.
+        </p>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <button id="refreshTokensBtn">Refresh todays tokens</button>
+      <button id="logoutBtn">Logout</button>
+    </div>
   </div>
 
-  <div id="qrArea" style="margin-bottom:12px">
-    <div id="qrText" style="display:inline-block; margin-right:12px"></div>
-    <div id="qrbox" style="display:inline-block"></div>
+  <div class="card-box">
+    <h3>Today issued tokens</h3>
+    <div id="tokenList"></div>
   </div>
-
-  <div style="margin-bottom:8px">
-    <button id="refreshTokens">Refresh Tokens</button>
-    <button id="logoutBtn">Logout</button>
-  </div>
-
-  <h3>Today's Issued Tokens</h3>
-  <div id="tokenList" style="max-width:900px"></div>
 </div>
 
 <script>
@@ -51,138 +67,209 @@
     storageBucket: "smart-opd-69488.firebasestorage.app",
     messagingSenderId: "373276983810",
     appId: "1:373276983810:web:88a3018ab7b811550d1d1b"
-  };
-  firebase.initializeApp(firebaseConfig);
-  var auth = firebase.auth();
-  var db = firebase.firestore();
+  }
+  firebase.initializeApp(firebaseConfig)
+  var auth = firebase.auth()
+  var db = firebase.firestore()
+
+  var currentHospitalId = null
 
   function todayString(){
-    var d = new Date();
-    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+    var d = new Date()
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0")
   }
 
-  function show(msg){
-    console.log(msg);
-  }
-
-  document.getElementById("hLoginBtn").addEventListener("click", function(){
-    var email = document.getElementById("hemail").value.trim();
-    var pass = document.getElementById("hpass").value;
-    if(!email || !pass){ alert("Enter credentials"); return; }
-    auth.signInWithEmailAndPassword(email, pass).catch(function(e){ alert(e.message); });
-  });
-
-  document.getElementById("logoutBtn").addEventListener("click", function(){
-    auth.signOut().catch(function(){});
-  });
-
-  document.getElementById("createHospitalBtn").addEventListener("click", async function(){
-    var hid = document.getElementById("hid").value.trim();
-    var name = document.getElementById("hname").value.trim();
-    var max = parseInt(document.getElementById("hmax").value) || 60;
-    if(!hid || !name){ alert("Provide hospital id and name"); return; }
-
-    var coll = db.collection("hospitals");
-    var existing = await coll.where("hospitalId","==",hid).get();
-    if(existing.empty){
-      await coll.add({ hospitalId: hid, name: name, maxPerDay: max, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-    } else {
-      var docId = existing.docs[0].id;
-      await coll.doc(docId).update({ name: name, maxPerDay: max });
+  function renderTokens(list, maxPerDay){
+    var box = document.getElementById("tokenList")
+    box.innerHTML = ""
+    if(!list || list.length === 0){
+      box.innerHTML = "<div style='color:#4c6b70'>No tokens for today yet</div>"
+      return
     }
+    list.forEach(function(t){
+      var div = document.createElement("div")
+      div.className = "tokenCard"
 
-    document.getElementById("qrText").innerText = JSON.stringify({ hospitalId: hid });
-    var box = document.getElementById("qrbox");
-    box.innerHTML = "";
-    new QRCode(box, { text: document.getElementById("qrText").innerText, width: 160, height: 160 });
-    alert("Hospital saved. Place this QR at counter.");
-    listenTokens(hid);
-  });
+      var top = document.createElement("div")
+      top.innerHTML = "<strong>Token " + t.tokenNumber + "</strong> visiting window " + (t.slot || "") + " status " + (t.status || "Pending")
+      var sub = document.createElement("div")
+      sub.style.fontSize = "13px"
+      sub.style.marginTop = "4px"
+      sub.innerText = "Date " + (t.date || todayString()) + " patient " + (t.uid || "")
 
-  function renderTokenItem(docSnap, idx){
-    var data = docSnap.data();
-    var container = document.createElement("div");
-    container.style.padding = "10px";
-    container.style.borderBottom = "1px solid #eee";
-    var left = "T" + data.tokenNumber + " | " + (data.name || data.uid || "") + " | " + data.slot + " | " + (data.status || "");
-    container.innerHTML = "<strong>" + left + "</strong>";
+      var btnCall = document.createElement("button")
+      btnCall.innerText = "Call"
+      btnCall.onclick = function(){
+        db.collection("tokens").doc(t._id).update({ status:"Called" })
+      }
 
-    var callBtn = document.createElement("button");
-    callBtn.innerText = "Call";
-    callBtn.style.marginLeft = "12px";
-    callBtn.onclick = function(){
-      db.collection("tokens").doc(docSnap.id).update({ status: "Called" });
-    };
+      var btnCheck = document.createElement("button")
+      btnCheck.innerText = "Checked in"
+      btnCheck.onclick = function(){
+        db.collection("tokens").doc(t._id).update({ status:"Checked In" })
+      }
 
-    var checkBtn = document.createElement("button");
-    checkBtn.innerText = "Checked In";
-    checkBtn.style.marginLeft = "8px";
-    checkBtn.onclick = function(){
-      db.collection("tokens").doc(docSnap.id).update({ status: "Checked In" });
-    };
+      var btnDel = document.createElement("button")
+      btnDel.innerText = "Delete"
+      btnDel.onclick = function(){
+        if(confirm("Delete this token")) db.collection("tokens").doc(t._id).delete()
+      }
 
-    var delBtn = document.createElement("button");
-    delBtn.innerText = "Delete";
-    delBtn.style.marginLeft = "8px";
-    delBtn.onclick = function(){
-      if(confirm("Delete this token?")) db.collection("tokens").doc(docSnap.id).delete();
-    };
+      div.appendChild(top)
+      div.appendChild(sub)
+      div.appendChild(btnCall)
+      div.appendChild(btnCheck)
+      div.appendChild(btnDel)
 
-    container.appendChild(callBtn);
-    container.appendChild(checkBtn);
-    container.appendChild(delBtn);
-
-    return container;
+      box.appendChild(div)
+    })
   }
 
-  var currentListener = null;
+  function loadTodayTokens(hid){
+    if(!hid) return
+    var dateStr = todayString()
+    db.collection("tokens")
+      .where("hospitalId","==",hid)
+      .where("date","==",dateStr)
+      .get()
+      .then(function(snap){
+        var arr = []
+        snap.forEach(function(doc){
+          var d = doc.data()
+          d._id = doc.id
+          arr.push(d)
+        })
+        arr.sort(function(a,b){
+          var ta = a.issuedAt && a.issuedAt.toMillis ? a.issuedAt.toMillis() : 0
+          var tb = b.issuedAt && b.issuedAt.toMillis ? b.issuedAt.toMillis() : 0
+          return ta - tb
+        })
 
-  function clearListener(){
-    if(currentListener && typeof currentListener === "function"){
-      currentListener();
-      currentListener = null;
+        var maxPerDay = 60
+        db.collection("hospitals").where("hospitalId","==",hid).get().then(function(hsnap){
+          if(!hsnap.empty){
+            var hd = hsnap.docs[0].data()
+            if(hd.maxPerDay) maxPerDay = hd.maxPerDay
+          }
+          renderTokens(arr, maxPerDay)
+        }).catch(function(){
+          renderTokens(arr, maxPerDay)
+        })
+      })
+      .catch(function(err){
+        alert("Error loading tokens " + err.message)
+      })
+  }
+
+  function generateQrForHospital(hid){
+    if(!hid) return
+    currentHospitalId = hid
+    var payload = JSON.stringify({ hospitalId: hid })
+    var qt = document.getElementById("qrText")
+    qt.textContent = payload
+    var box = document.getElementById("qrbox")
+    box.innerHTML = ""
+    new QRCode(box, {
+      text: payload,
+      width: 260,
+      height: 260
+    })
+  }
+
+  function downloadQrImage(){
+    var box = document.getElementById("qrbox")
+    var img = box.querySelector("img") || box.querySelector("canvas")
+    if(!img){
+      alert("QR not ready yet")
+      return
     }
+    var href
+    if(img.tagName === "IMG"){
+      href = img.src
+    }else{
+      href = img.toDataURL("image/png")
+    }
+    var a = document.createElement("a")
+    a.href = href
+    var name = currentHospitalId ? currentHospitalId + "_QR.png" : "hospital_qr.png"
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
   }
 
-  function listenTokens(hospitalId){
-    clearListener();
-    var dateStr = todayString();
-    var q = db.collection("tokens").where("hospitalId","==",hospitalId).where("date","==",dateStr).orderBy("issuedAt");
-    currentListener = q.onSnapshot(function(snapshot){
-      var list = document.getElementById("tokenList");
-      list.innerHTML = "";
-      if(snapshot.empty) list.innerText = "No tokens issued yet for today";
-      snapshot.forEach(function(docSnap, idx){
-        var el = renderTokenItem(docSnap, idx);
-        list.appendChild(el);
-      });
-    }, function(err){
-      console.error(err);
-      alert("Error listening tokens: " + err.message);
-    });
+  document.getElementById("loginBtn").onclick = function(){
+    var email = document.getElementById("hemail").value.trim()
+    var pass = document.getElementById("hpass").value
+    if(!email || !pass) return
+    auth.signInWithEmailAndPassword(email, pass).catch(function(e){ alert(e.message) })
   }
 
-  document.getElementById("refreshTokens").addEventListener("click", function(){
-    var qr = document.getElementById("qrText").innerText;
-    if(!qr){ alert("Create hospital first"); return; }
-    try{
-      var obj = JSON.parse(qr);
-      listenTokens(obj.hospitalId);
-    }catch(e){ alert("Invalid QR text"); }
-  });
+  document.getElementById("logoutBtn").onclick = function(){
+    auth.signOut()
+  }
+
+  document.getElementById("saveHospitalBtn").onclick = function(){
+    var hid = document.getElementById("hid").value.trim()
+    var name = document.getElementById("hname").value.trim()
+    var max = parseInt(document.getElementById("hmax").value || "60",10)
+    if(!hid || !name){
+      alert("Fill hospital id and name")
+      return
+    }
+    db.collection("hospitals").where("hospitalId","==",hid).get()
+      .then(function(snap){
+        if(snap.empty){
+          return db.collection("hospitals").add({
+            hospitalId:hid,
+            name:name,
+            maxPerDay:max
+          })
+        }else{
+          var id = snap.docs[0].id
+          return db.collection("hospitals").doc(id).update({
+            name:name,
+            maxPerDay:max
+          })
+        }
+      })
+      .then(function(){
+        generateQrForHospital(hid)
+        loadTodayTokens(hid)
+      })
+      .catch(function(e){ alert(e.message) })
+  }
+
+  document.getElementById("refreshTokensBtn").onclick = function(){
+    if(!currentHospitalId){
+      var txt = document.getElementById("qrText").textContent
+      if(txt){
+        try{
+          var obj = JSON.parse(txt)
+          currentHospitalId = obj.hospitalId
+        }catch(e){}
+      }
+    }
+    if(!currentHospitalId){
+      alert("Set hospital and QR first")
+      return
+    }
+    loadTodayTokens(currentHospitalId)
+  }
+
+  document.getElementById("downloadQrBtn").onclick = downloadQrImage
 
   auth.onAuthStateChanged(function(user){
-    var authArea = document.getElementById("authArea");
-    var dash = document.getElementById("hDash");
+    var authBox = document.getElementById("authArea")
+    var dash = document.getElementById("dashArea")
     if(user){
-      authArea.style.display = "none";
-      dash.style.display = "block";
-    } else {
-      authArea.style.display = "block";
-      dash.style.display = "none";
-      clearListener();
+      authBox.style.display = "none"
+      dash.style.display = "block"
+    }else{
+      authBox.style.display = "block"
+      dash.style.display = "none"
     }
-  });
+  })
 </script>
 
 </body>
